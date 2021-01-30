@@ -2,22 +2,26 @@ package hall
 
 import (
 	"errors"
+	hallModel "hallserver/model/hall"
 	"jarvis/base/network"
+	uTime "jarvis/util/time"
 	"log"
 	"sync"
+	"time"
 )
 
 type (
 	// 模块定义
 	hallModule struct {
-		client     network.Client
-		connManage *connManage
+		usClient        network.Client // userServer client
+		connManage      *connManage
+		announceChannel chan hallModel.Announcement // 公告通道
 	}
 
 	// 连接映射用户管理
 	connManage struct {
 		connMapLock sync.Mutex
-		connMap     map[string]map[string]string // map[conn id]map[string]string{Token:token,Session:session}
+		connMap     map[string]string // map[conn id]token
 	}
 )
 
@@ -28,11 +32,8 @@ const (
 	// 用户服务开放端口
 	userServerAddress = ":8082"
 
-	// 连接映射用户信息 Token 键
-	connUserToken = "Token"
-
-	// 连接映射用户信息 Session 键
-	connUserSession = "Session"
+	// 公告通道大小
+	announceChannelSize = 10
 )
 
 var (
@@ -50,16 +51,20 @@ func init() {
 
 	// 默认模块实例化
 	defaultHall = &hallModule{
-		client: c,
+		usClient: c,
 		connManage: &connManage{
 			connMapLock: sync.Mutex{},
-			connMap:     make(map[string]map[string]string),
+			connMap:     make(map[string]string),
 		},
+		announceChannel: make(chan hallModel.Announcement, announceChannelSize),
 	}
 }
 
 // 将默认模块声明为模块
 func NewModule() network.Module {
+	ticker := uTime.NewTicker(time.Second*time.Duration(1), defaultHall.announce)
+	ticker.Run()
+
 	return defaultHall
 }
 
@@ -74,6 +79,10 @@ func (hm *hallModule) Name() string {
 }
 
 // 模块要求实现函数: Route() map[string][]network.RouteHandleFunc
+// todo : 1.公告
+// todo : 2.排行榜
+// todo : 3.Banner
+// todo : 4.游戏
 func (hm *hallModule) Route() map[string][]network.RouteHandleFunc {
 	return map[string][]network.RouteHandleFunc{
 		"login": {hm.login}, // 登录
@@ -94,6 +103,20 @@ func (hm *hallModule) ObserveDisconnect(id string) {
 	}
 }
 
+// 观察者要求实现函数: InitiativeSend(network.Context)
+func (hm *hallModule) InitiativeSend(ctx network.Context) {
+	for {
+		announcement, ok := <-hm.announceChannel
+		if !ok {
+			break
+		}
+
+		for _, id := range announcement.IDs {
+			go printReplyError(ctx.FindAndSendReply(id, announcement.Reply, announcement.Data))
+		}
+	}
+}
+
 // 添加连接
 func (cm *connManage) AddConn(id string) error {
 	cm.connMapLock.Lock()
@@ -103,7 +126,7 @@ func (cm *connManage) AddConn(id string) error {
 		return errors.New(id + " exist")
 	}
 
-	cm.connMap[id] = map[string]string{}
+	cm.connMap[id] = ""
 
 	log.Printf("ConnManage : %+v", cm)
 
@@ -124,45 +147,38 @@ func (cm *connManage) RemoveConn(id string) error {
 }
 
 // 添加连接信息
-func (cm *connManage) AddConnUserInfo(id, token, session string) error {
-	if id == "" || token == "" || session == "" {
+func (cm *connManage) AddConnUserInfo(id, token string) error {
+	if id == "" || token == "" {
 		return errors.New("id,token or session can't be empty")
 	}
 
 	cm.connMapLock.Lock()
 	defer cm.connMapLock.Unlock()
 
-	infoMap, exist := cm.connMap[id]
+	_, exist := cm.connMap[id]
 	if !exist {
 		return errors.New(id + " doesn't exist")
 	}
 
-	infoMap[token] = session
+	cm.connMap[id] = token
 
-	log.Printf("ConnManage [%s] user : %+v", id, infoMap)
+	log.Printf("ConnManage [%s] user : %s", id, token)
 
 	return nil
 }
 
-// 校验连接信息
-func (cm *connManage) VerifyConnUserInfo(id, token, session string) (bool, error) {
-	if id == "" || token == "" || session == "" {
-		return false, errors.New("id,token or session can't be empty")
-	}
+// 获取当前所有连接的 ID
+func (cm *connManage) AllConnIDList() []string {
+	ids := make([]string, 0)
 
 	cm.connMapLock.Lock()
 	defer cm.connMapLock.Unlock()
 
-	infoMap, exist := cm.connMap[id]
-	if !exist {
-		return false, errors.New(id + " doesn't exist")
+	for id := range cm.connMap {
+		ids = append(ids, id)
 	}
 
-	if session != infoMap[token] {
-		return false, nil
-	}
-
-	return true, nil
+	return ids
 }
 
 // 打印回复错误
