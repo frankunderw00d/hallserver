@@ -2,12 +2,14 @@ package hall
 
 import (
 	"baseservice/base/basic"
+	"context"
 	"encoding/json"
-	redisGo "github.com/gomodule/redigo/redis"
+	"go.mongodb.org/mongo-driver/bson"
 	"jarvis/base/database"
 	"jarvis/base/network"
 	uRand "jarvis/util/rand"
 	"log"
+	"time"
 )
 
 const (
@@ -21,8 +23,6 @@ const (
 
 // 转接到用户服务中
 func (hm *hallModule) login(ctx network.Context) {
-	log.Println(string(ctx.Request().Data))
-
 	message, err := hm.usClient.RequestSync(network.Message{
 		Module: UserModule,
 		Route:  UserLogin,
@@ -33,8 +33,6 @@ func (hm *hallModule) login(ctx network.Context) {
 		printReplyError(ctx.ServerError(err))
 		return
 	}
-
-	log.Println(string(message.Data))
 
 	printReplyError(ctx.BinaryReply(message.Data))
 
@@ -100,8 +98,6 @@ func (hm *hallModule) getUserInfo(token, session string) {
 		return
 	}
 
-	log.Println(string(message.Data))
-
 	reply := network.Reply{}
 	if err := json.Unmarshal(message.Data, &reply); err != nil {
 		log.Printf("unmarshal Message.Data [%s] to Reply error : %s", string(message.Data), err.Error())
@@ -136,17 +132,20 @@ func (hm *hallModule) getUserInfo(token, session string) {
 
 	log.Printf("Hall Login Get User Information : %+v", b)
 
-	// 将登录消息发布到 redis 集群公告中通知全服
-	redisConn, err := database.GetRedisConn()
+	// 将公告记录保存到 mongo
+	c, err := database.GetMongoConn("hall_announce_record")
 	if err != nil {
-		log.Printf("get redis conn error : %s", err.Error())
+		log.Printf("get mongo conn error : %s", err.Error())
 		return
 	}
-	defer redisConn.Close()
 
-	_, err = redisGo.Int(redisConn.Do("rpush", RedisAnnouncementKey, "热烈欢迎用户 "+b.Name+" 登录游戏"))
+	_, err = c.InsertOne(context.Background(), bson.M{
+		"announcement": "热烈欢迎用户 " + b.Name + " 登录游戏",
+		"from":         "service",
+		"time":         time.Now().Format("20060102150405.000000000"),
+	})
 	if err != nil {
-		log.Printf("rpush announcement to redis error : %s", err.Error())
+		log.Printf("Distributed sync publish error : %s", err.Error())
 		return
 	}
 }

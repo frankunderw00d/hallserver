@@ -1,7 +1,9 @@
 package hall
 
 import (
-	redisGo "github.com/gomodule/redigo/redis"
+	"context"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo/options"
 	hallModel "hallserver/model/hall"
 	"jarvis/base/database"
 	"log"
@@ -9,25 +11,33 @@ import (
 )
 
 const (
-	// redis 全局公告键
-	RedisAnnouncementKey = "GLOBAL:ANNOUNCEMENTS"
 	// 主动推送到端的路径
 	AnnounceRoute = "ANNOUNCE"
 )
 
+// 每10秒推送一条公告记录中最新的公告
 func (hm *hallModule) announce(t time.Time) bool {
-	redisConn, err := database.GetRedisConn()
+	c, err := database.GetMongoConn("hall_announce_record")
 	if err != nil {
-		log.Printf("get redis conn error : %s", err.Error())
+		log.Printf("get mongo conn error : %s", err.Error())
 		return true
 	}
-	defer redisConn.Close()
 
-	v, err := redisGo.String(redisConn.Do("lpop", RedisAnnouncementKey))
+	var result map[string]interface{}
+	err = c.FindOne(context.Background(), bson.D{}, options.FindOne().SetSort(bson.D{{"time", -1}})).Decode(&result)
 	if err != nil {
-		if err != redisGo.ErrNil {
-			log.Printf("rpush announcement to redis error : %s", err.Error())
-		}
+		log.Printf("mongo conn find one decode error : %s", err.Error())
+		return true
+	}
+
+	a, ok := result["announcement"]
+	if !ok {
+		log.Println("announcement key doesn't exists")
+		return true
+	}
+	v, ok := a.(string)
+	if !ok {
+		log.Println("announcement value aren't string")
 		return true
 	}
 

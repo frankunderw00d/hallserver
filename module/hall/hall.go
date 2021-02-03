@@ -1,6 +1,7 @@
 package hall
 
 import (
+	"baseservice/middleware/authenticate"
 	"errors"
 	hallModel "hallserver/model/hall"
 	"jarvis/base/network"
@@ -62,9 +63,6 @@ func init() {
 
 // 将默认模块声明为模块
 func NewModule() network.Module {
-	ticker := uTime.NewTicker(time.Second*time.Duration(1), defaultHall.announce)
-	ticker.Run()
-
 	return defaultHall
 }
 
@@ -75,17 +73,22 @@ func NewObserver() network.Observer {
 
 // 模块要求实现函数: Name() string
 func (hm *hallModule) Name() string {
+
+	// todo : jarvis 框架需要为 Module 开辟初始化和定时任务的函数
+	ticker := uTime.NewTicker(time.Second*time.Duration(10), defaultHall.announce)
+	ticker.Run()
+
 	return ModuleName
 }
 
 // 模块要求实现函数: Route() map[string][]network.RouteHandleFunc
-// todo : 1.公告
-// todo : 2.排行榜
+// todo : 2.排行榜 在线时长排行榜，金币拥有排行榜，金币赚取排行榜
 // todo : 3.Banner
 // todo : 4.游戏
 func (hm *hallModule) Route() map[string][]network.RouteHandleFunc {
 	return map[string][]network.RouteHandleFunc{
-		"login": {hm.login}, // 登录
+		"login": {hm.login},                           // 登录
+		"rank":  {authenticate.Authenticate, hm.rank}, // 排行榜，前置校验
 	}
 }
 
@@ -143,6 +146,7 @@ func (cm *connManage) RemoveConn(id string) error {
 	}
 
 	delete(cm.connMap, id)
+
 	return nil
 }
 
