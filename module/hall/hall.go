@@ -44,7 +44,7 @@ var (
 
 func init() {
 	// 实例化客户端
-	c := network.NewGRPCClient(userServerAddress, network.DefaultPackager())
+	c := network.NewGRPCClient(userServerAddress, network.DefaultPackager(),network.DefaultEncrypter())
 	if err := c.Initialize(); err != nil {
 		log.Fatalln(err.Error())
 		return
